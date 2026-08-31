@@ -1,4 +1,4 @@
-// WEB SHOOTER — wrist sensor A
+// WEB SHOOTER — wrist sensor A5
 // micro:bit v2 / MakeCode JavaScript
 
 const RADIO_GROUP = 147
@@ -11,6 +11,7 @@ const ARM_WINDOW_MS = 1200
 const POSE_LOSS_GRACE_MS = 320
 const POSE_RELEASE_MS = 180
 const COOLDOWN_MS = 650
+const SECOND_PACKET_DELAY_MS = 90
 
 // Unit-vector dot products are scaled to 1000.
 // 900 is approximately a 26-degree cone around the calibrated pose.
@@ -19,7 +20,8 @@ const GENERIC_POSE_COS_MAX = 910
 const GENERIC_POSE_COS_MIN = 250
 const MIN_FIRE_SEPARATION_COS = 970
 
-// Radio is intentionally one-way: A sends one short packet, B only receives.
+// Radio is intentionally one-way. Two spaced packets tolerate wrist movement
+// without returning to the six-packet burst that overloaded earlier builds.
 
 let neutralX = 0
 let neutralY = 0
@@ -54,6 +56,8 @@ let sensitivityLevel = 2
 let motionThreshold = 420
 
 let shotFlashUntil = 0
+let secondPacketPending = false
+let secondPacketAt = 0
 
 let nextSampleAt = 0
 let nextDisplayAt = 0
@@ -160,6 +164,8 @@ function orientationIsFiringPose(): boolean {
 
 function issueWebShot(now: number): void {
     radio.sendNumber(WEB_PACKET)
+    secondPacketPending = true
+    secondPacketAt = now + SECOND_PACKET_DELAY_MS
 
     cooldownUntil = now + COOLDOWN_MS
     shotFlashUntil = now + 180
@@ -315,8 +321,8 @@ function renderDisplay(now: number): void {
 
 radio.setGroup(RADIO_GROUP)
 radio.setFrequencyBand(RADIO_BAND)
-// Moderate power is ample at exhibit distance and reduces RF bursts near USB.
-radio.setTransmitPower(3)
+// Moderate power handles body shielding without the former maximum-power burst.
+radio.setTransmitPower(4)
 
 // Button A: learn the neutral/resting wrist orientation.
 input.onButtonPressed(Button.A, function () {
@@ -415,8 +421,8 @@ input.onLogoEvent(TouchButtonEvent.Pressed, function () {
 input.setAccelerometerRange(AcceleratorRange.FourG)
 applySensitivity()
 
-// Firmware marker. If A4 is not shown, the old build is still installed.
-basic.showString("A4", 80)
+// Firmware marker. If A5 is not shown, the old build is still installed.
+basic.showString("A5", 80)
 
 // Power-on neutral calibration. Keep the worn wrist still while N is shown.
 basic.showString("N", 80)
@@ -445,6 +451,11 @@ nextDisplayAt = control.millis()
 
 basic.forever(function () {
     let now = control.millis()
+
+    if (secondPacketPending && now >= secondPacketAt) {
+        secondPacketPending = false
+        radio.sendNumber(WEB_PACKET)
+    }
 
     if (!calibrating && now >= nextSampleAt) {
         nextSampleAt = now + SAMPLE_MS

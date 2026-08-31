@@ -1,4 +1,4 @@
-// WEB SHOOTER — USB receiver B4
+// WEB SHOOTER — USB receiver B5
 // micro:bit v2 / MakeCode JavaScript
 // Minimal Radio interrupt + short USB protocol stability build.
 
@@ -6,6 +6,7 @@ const RADIO_GROUP = 147
 const RADIO_BAND = 50
 const WEB_PACKET = 73147
 const SERIAL_HEARTBEAT_MS = 1000
+const RADIO_DEDUP_MS = 400
 
 // 0: none, 1: Radio shot, 2: receiver-local test.
 let pendingKind = 0
@@ -20,6 +21,7 @@ let webFlashUntil = 0
 let statusFlashUntil = 0
 let nextHeartbeatAt = 0
 let nextDisplayAt = 0
+let lastRadioAcceptedAt = -1000
 
 function queueShot(kind: number, sequence: number): void {
     pendingKind = kind
@@ -96,8 +98,8 @@ input.onButtonPressed(Button.B, function () {
     pendingHeartbeat = true
 })
 
-// Firmware marker. If B4 is not shown, the old build is still installed.
-basic.showString("B4", 80)
+// Firmware marker. If B5 is not shown, the old build is still installed.
+basic.showString("B5", 80)
 serial.writeLine("R")
 
 nextHeartbeatAt = control.millis() + 500
@@ -108,8 +110,13 @@ basic.forever(function () {
 
     if (radioPulse) {
         radioPulse = false
-        remoteSequence = (remoteSequence + 1) % 1000
-        queueShot(1, remoteSequence)
+
+        // A5 sends two spaced copies. Accept only the first copy as one shot.
+        if (now - lastRadioAcceptedAt >= RADIO_DEDUP_MS) {
+            lastRadioAcceptedAt = now
+            remoteSequence = (remoteSequence + 1) % 1000
+            queueShot(1, remoteSequence)
+        }
     }
 
     if (pendingKind != 0) {

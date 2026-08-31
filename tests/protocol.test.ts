@@ -16,7 +16,7 @@ test('parses receiver ready messages', () => {
   });
 });
 
-test('parses the B4 short stability protocol', () => {
+test('parses the B4/B5 short stability protocol', () => {
   assert.deepEqual(parseReceiverLine('R\r'), {
     type: 'READY',
     receiverMs: 0,
