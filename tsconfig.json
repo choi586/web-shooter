@@ -32,5 +32,5 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "microbit"]
+  "exclude": ["node_modules", "microbit", "release/WEB_SHOOTER_microbit_source"]
 }

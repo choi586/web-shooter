@@ -5,7 +5,15 @@ import nextTs from 'eslint-config-next/typescript';
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
-  globalIgnores(['.next/**', 'dist/**', 'out/**', 'build/**', 'microbit/**', 'next-env.d.ts']),
+  globalIgnores([
+    '.next/**',
+    'dist/**',
+    'out/**',
+    'build/**',
+    'microbit/**',
+    'release/WEB_SHOOTER_microbit_source/**',
+    'next-env.d.ts',
+  ]),
 ]);
 
 export default eslintConfig;
