@@ -111,7 +111,7 @@ export class WebShooterSerial {
       return;
     }
 
-    if (this.port || this.readTask) return;
+    if (this.port || this.readTask) await this.disconnect();
 
     try {
       this.callbacks.onState('connecting');

@@ -569,6 +569,16 @@ summary:focus-visible {
   transform-origin: 30% 100%;
 }
 
+.hand-left .instruction-card {
+  right: clamp(24px, 4vw, 72px);
+  left: auto;
+}
+
+.hand-left .operator-launch {
+  right: auto;
+  left: clamp(22px, 3vw, 52px);
+}
+
 .is-shooting.hand-right .first-person-arm {
   transform: rotate(-29deg) translate(-4%, -3%);
 }
@@ -1299,6 +1309,13 @@ summary:focus-visible {
     bottom: auto;
   }
 
+  .hand-left .operator-launch {
+    top: 96px;
+    right: auto;
+    bottom: auto;
+    left: 18px;
+  }
+
   .first-person-arm {
     right: -13%;
     bottom: -7%;
@@ -1327,6 +1344,10 @@ summary:focus-visible {
     bottom: 20px;
     width: calc(100vw - 32px);
   }
+  .hand-left .instruction-card {
+    right: 16px;
+    left: auto;
+  }
 
   .play-hud {
     top: 90px;
@@ -1339,6 +1360,9 @@ summary:focus-visible {
   }
 
   .operator-launch {
+    top: 84px;
+  }
+  .hand-left .operator-launch {
     top: 84px;
   }
 

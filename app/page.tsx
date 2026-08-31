@@ -109,6 +109,7 @@ export default function Home() {
   const durationRef = useRef(35);
   const endAtRef = useRef(0);
   const lockUntilRef = useRef(0);
+  const presentationLockRef = useRef(false);
   const lastInputAtRef = useRef(0);
   const sessionUsesSerialRef = useRef(false);
   const sessionIsRealRef = useRef(false);
@@ -141,6 +142,7 @@ export default function Home() {
     clearShotTimers();
     finishTimerRef.current = null;
     lockUntilRef.current = 0;
+    presentationLockRef.current = false;
     hitsRef.current = 0;
     setHits(0);
     setRemainingMs(durationRef.current * 1000);
@@ -190,6 +192,12 @@ export default function Home() {
     (source: InputSource) => {
       const now = performance.now();
 
+      if (source === 'serial') {
+        setDemoMode(false);
+        sessionUsesSerialRef.current = true;
+        if (presentationLockRef.current) lockUntilRef.current = 0;
+      }
+
       if (source === 'keyboard' && pausedRef.current) {
         sessionUsesSerialRef.current = false;
         resumeFromPause();
@@ -200,12 +208,8 @@ export default function Home() {
       if (phaseRef.current === 'result' || now < lockUntilRef.current) return;
       lockUntilRef.current = now + 650;
 
-      if (source === 'serial') {
-        setDemoMode(false);
-        sessionUsesSerialRef.current = true;
-      }
-
       const presentationOnly = source === 'demo' || source === 'test';
+      presentationLockRef.current = presentationOnly;
       if (!presentationOnly) {
         sessionIsRealRef.current = true;
         lastInputAtRef.current = now;
@@ -350,15 +354,23 @@ export default function Home() {
 
   useEffect(() => {
     if (!settingsLoaded) return;
-    window.localStorage.setItem(
-      'web-shooter-settings-v1',
-      JSON.stringify({ duration: sessionDuration, muted, volume, reducedMotion, handSide }),
-    );
+    try {
+      window.localStorage.setItem(
+        'web-shooter-settings-v1',
+        JSON.stringify({ duration: sessionDuration, muted, volume, reducedMotion, handSide }),
+      );
+    } catch {
+      // The event screen can keep running when browser storage is unavailable.
+    }
   }, [handSide, muted, reducedMotion, sessionDuration, settingsLoaded, volume]);
 
   useEffect(() => {
     if (!settingsLoaded) return;
-    window.localStorage.setItem('web-shooter-stats-v1', JSON.stringify(stats));
+    try {
+      window.localStorage.setItem('web-shooter-stats-v1', JSON.stringify(stats));
+    } catch {
+      // Daily totals are helpful but never allowed to interrupt the experience.
+    }
   }, [settingsLoaded, stats]);
 
   useEffect(() => {
