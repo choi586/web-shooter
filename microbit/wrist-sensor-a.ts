@@ -18,8 +18,9 @@ const GENERIC_POSE_COS_MAX = 910
 const GENERIC_POSE_COS_MIN = 250
 const MIN_FIRE_SEPARATION_COS = 970
 
-const LINK_TIMEOUT_MS = 3000
-const RETRY_INTERVAL_MS = 24
+// Radio is intentionally one-way: A sends, B only receives.
+// Six short numeric copies give the wearable link extra margin without ACKs.
+const RETRY_INTERVAL_MS = 60
 
 let neutralX = 0
 let neutralY = 0
@@ -56,14 +57,11 @@ let motionThreshold = 420
 let bootId = Math.randomRange(1, 255)
 let shotSequence = Math.randomRange(0, 999)
 
-let pendingPacket = ""
+let pendingPacket = 0
 let retryCount = 0
 let nextRetryAt = 0
-let expectedAck = ""
 
-let lastReceiverAt = -1
 let shotFlashUntil = 0
-let ackFlashUntil = 0
 
 let nextSampleAt = 0
 let nextDisplayAt = 0
@@ -171,24 +169,18 @@ function orientationIsFiringPose(): boolean {
 function issueWebShot(now: number): void {
     shotSequence = (shotSequence + 1) % 1000
 
-    let senderTime = now % 100000000
-    pendingPacket =
-        "W|" + bootId +
-        "|" + shotSequence +
-        "|" + senderTime
+    // bootId 1..255 and sequence 0..999 fit in one small integer packet.
+    pendingPacket = bootId * 1000 + shotSequence
 
-    expectedAck = "A|" + bootId + "|" + shotSequence
+    radio.sendNumber(pendingPacket)
 
-    radio.sendString(pendingPacket)
-
-    // Two quick retries make a busy event space more reliable.
-    // Receiver B removes duplicates before forwarding a shot.
-    retryCount = 2
+    // B never transmits an acknowledgement. It removes these copies before
+    // forwarding exactly one WEB line to the computer.
+    retryCount = 5
     nextRetryAt = now + RETRY_INTERVAL_MS
 
     cooldownUntil = now + COOLDOWN_MS
     shotFlashUntil = now + 180
-    ackFlashUntil = 0
 
     resetGesture(true)
 }
@@ -282,14 +274,6 @@ function processGesture(now: number): void {
     }
 }
 
-function drawCheck(): void {
-    led.plot(0, 2)
-    led.plot(1, 3)
-    led.plot(2, 4)
-    led.plot(3, 2)
-    led.plot(4, 0)
-}
-
 function drawBurst(): void {
     led.plot(2, 0)
     led.plot(2, 1)
@@ -314,39 +298,11 @@ function drawTarget(): void {
     led.plot(2, 4)
 }
 
-function drawNoLink(): void {
-    led.plot(0, 0)
-    led.plot(1, 1)
-    led.plot(2, 2)
-    led.plot(3, 3)
-    led.plot(4, 4)
-    led.plot(4, 0)
-    led.plot(3, 1)
-    led.plot(1, 3)
-    led.plot(0, 4)
-}
-
 function renderDisplay(now: number): void {
     basic.clearScreen()
 
     if (now < shotFlashUntil) {
         drawBurst()
-        return
-    }
-
-    if (now < ackFlashUntil) {
-        drawCheck()
-        return
-    }
-
-    let linked =
-        lastReceiverAt >= 0 &&
-        now - lastReceiverAt < LINK_TIMEOUT_MS
-
-    if (!linked) {
-        if (Math.floor(now / 250) % 2 == 0) {
-            drawNoLink()
-        }
         return
     }
 
@@ -378,19 +334,6 @@ function renderDisplay(now: number): void {
 radio.setGroup(RADIO_GROUP)
 radio.setFrequencyBand(RADIO_BAND)
 radio.setTransmitPower(7)
-
-radio.onReceivedString(function (message: string) {
-    let now = control.millis()
-
-    if (message.substr(0, 2) == "B|") {
-        lastReceiverAt = now
-    }
-
-    if (message == expectedAck) {
-        lastReceiverAt = now
-        ackFlashUntil = now + 400
-    }
-})
 
 // Button A: learn the neutral/resting wrist orientation.
 input.onButtonPressed(Button.A, function () {
@@ -518,7 +461,7 @@ basic.forever(function () {
     let now = control.millis()
 
     if (retryCount > 0 && now >= nextRetryAt) {
-        radio.sendString(pendingPacket)
+        radio.sendNumber(pendingPacket)
         retryCount -= 1
         nextRetryAt = now + RETRY_INTERVAL_MS
     }

@@ -1,12 +1,12 @@
 // WEB SHOOTER — USB receiver B
 // micro:bit v2 / MakeCode JavaScript
+// Stability build: one-way Radio and single-owner USB Serial output.
 
 const RADIO_GROUP = 71
 const RADIO_BAND = 7
 
-const BEACON_INTERVAL_MS = 750
 const SERIAL_HEARTBEAT_MS = 1000
-const DUPLICATE_WINDOW_MS = 300
+const DUPLICATE_WINDOW_MS = 1200
 
 let radioPackets = 0
 let webLines = 0
@@ -19,13 +19,21 @@ let lastRadioUniqueAt = -1
 let lastWebAt = -1
 
 let localTestSequence = 0
-let beaconSequence = 0
+
+// Radio and button callbacks only place work in this mailbox. The forever
+// loop below is the only fiber that writes to USB Serial.
+let pendingWeb = false
+let pendingBoot = 0
+let pendingSequence = 0
+let pendingSenderTime = 0
+let pendingRssi = 0
+let pendingReceiverTime = 0
+let pendingStatus = false
 
 let webFlashUntil = 0
 let badFlashUntil = 0
 let statusFlashUntil = 0
 
-let nextBeaconAt = 0
 let nextHeartbeatAt = 0
 let nextDisplayAt = 0
 
@@ -67,16 +75,27 @@ function emitStatus(type: string): void {
     )
 }
 
-function injectLocalTest(): void {
+function queueWeb(
+    boot: number,
+    sequence: number,
+    senderTime: number,
+    rssi: number,
+    receiverTime: number
+): void {
+    pendingBoot = boot
+    pendingSequence = sequence
+    pendingSenderTime = senderTime
+    pendingRssi = rssi
+    pendingReceiverTime = receiverTime
+    pendingWeb = true
+}
+
+function queueLocalTest(): void {
     let now = control.millis()
     localTestSequence = (localTestSequence + 1) % 1000
 
     // Boot/session 0 is reserved for receiver-local tests.
-    emitWebLine(0, localTestSequence, 0, 0, now)
-
-    webLines += 1
-    lastWebAt = now
-    webFlashUntil = now + 220
+    queueWeb(0, localTestSequence, 0, 0, now)
 }
 
 function drawBurst(): void {
@@ -133,7 +152,7 @@ function renderDisplay(now: number): void {
         return
     }
 
-    // Center dot means receiver ready.
+    // Center dot means receiver and USB heartbeat loop are ready.
     led.plot(2, 2)
 }
 
@@ -144,42 +163,29 @@ serial.setWriteLinePadding(0)
 
 radio.setGroup(RADIO_GROUP)
 radio.setFrequencyBand(RADIO_BAND)
-radio.setTransmitPower(7)
 
-radio.onReceivedString(function (message: string) {
+radio.onReceivedNumber(function (packet: number) {
     let now = control.millis()
 
-    // Read signal strength before transmitting the acknowledgement.
+    // This callback never transmits Radio and never writes USB Serial.
     let rssi = radio.receivedPacket(
         RadioPacketProperty.SignalStrength
     )
 
     radioPackets += 1
 
-    let fields = message.split("|")
-
-    if (fields.length != 4 || fields[0] != "W") {
-        invalidPackets += 1
-        badFlashUntil = now + 180
-        return
-    }
-
-    let boot = parseInt(fields[1])
-    let sequence = parseInt(fields[2])
-    let senderTime = parseInt(fields[3])
+    let boot = Math.idiv(packet, 1000)
+    let sequence = packet % 1000
 
     if (
+        packet != Math.floor(packet) ||
         !(boot >= 1 && boot <= 255) ||
-        !(sequence >= 0 && sequence <= 999) ||
-        !(senderTime >= 0 && senderTime < 100000000)
+        !(sequence >= 0 && sequence <= 999)
     ) {
         invalidPackets += 1
         badFlashUntil = now + 180
         return
     }
-
-    // Acknowledge every valid copy, including retries.
-    radio.sendString("A|" + boot + "|" + sequence)
 
     let duplicate =
         lastRadioUniqueAt >= 0 &&
@@ -195,59 +201,24 @@ radio.onReceivedString(function (message: string) {
     lastRadioBoot = boot
     lastRadioSequence = sequence
     lastRadioUniqueAt = now
-    lastWebAt = now
 
-    webLines += 1
-    webFlashUntil = now + 220
-
-    emitWebLine(
+    queueWeb(
         boot,
         sequence,
-        senderTime,
+        now,
         rssi,
         now
     )
 })
 
-// Optional newline-terminated commands from a serial console:
-// PING, STATUS, TEST
-serial.onDataReceived(
-    serial.delimiters(Delimiters.NewLine),
-    function () {
-        let command = serial.readUntil(
-            serial.delimiters(Delimiters.NewLine)
-        )
-
-        if (
-            command.indexOf("PING") == 0 ||
-            command.indexOf("WS1|PING") == 0
-        ) {
-            serial.writeLine(
-                "WS1|PONG|" + control.millis()
-            )
-        } else if (
-            command.indexOf("STATUS") == 0 ||
-            command.indexOf("WS1|STATUS") == 0
-        ) {
-            emitStatus("STATUS")
-            statusFlashUntil = control.millis() + 220
-        } else if (
-            command.indexOf("TEST") == 0 ||
-            command.indexOf("WS1|TEST") == 0
-        ) {
-            injectLocalTest()
-        }
-    }
-)
-
-// Button A: inject a local shot without wrist unit A.
+// Button A: queue a local shot without wrist unit A.
 input.onButtonPressed(Button.A, function () {
-    injectLocalTest()
+    queueLocalTest()
 })
 
-// Button B: print status immediately.
+// Button B: queue status output. Serial still writes from the main loop only.
 input.onButtonPressed(Button.B, function () {
-    emitStatus("STATUS")
+    pendingStatus = true
     statusFlashUntil = control.millis() + 220
 })
 
@@ -258,17 +229,37 @@ serial.writeLine(
     RADIO_BAND
 )
 
-nextBeaconAt = control.millis() + 200
 nextHeartbeatAt = control.millis() + 500
 nextDisplayAt = control.millis()
 
 basic.forever(function () {
     let now = control.millis()
 
-    if (now >= nextBeaconAt) {
-        nextBeaconAt = now + BEACON_INTERVAL_MS
-        beaconSequence = (beaconSequence + 1) % 100
-        radio.sendString("B|" + beaconSequence)
+    if (pendingWeb) {
+        // Copy the mailbox before allowing the Radio fiber to fill it again.
+        let boot = pendingBoot
+        let sequence = pendingSequence
+        let senderTime = pendingSenderTime
+        let rssi = pendingRssi
+        let receiverTime = pendingReceiverTime
+        pendingWeb = false
+
+        emitWebLine(
+            boot,
+            sequence,
+            senderTime,
+            rssi,
+            receiverTime
+        )
+
+        webLines += 1
+        lastWebAt = now
+        webFlashUntil = now + 220
+    }
+
+    if (pendingStatus) {
+        pendingStatus = false
+        emitStatus("STATUS")
     }
 
     if (now >= nextHeartbeatAt) {
