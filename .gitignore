@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.next/
+.vinext/
+.wrangler/
+.DS_Store
+*.log
+*.tgz
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
