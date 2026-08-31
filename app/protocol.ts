@@ -42,7 +42,40 @@ const integer = (value: string, min: number, max: number) => {
 };
 
 export function parseReceiverLine(raw: string): ReceiverMessage | null {
-  const fields = raw.replace(/\r$/, '').trim().split('|');
+  const line = raw.replace(/\r$/, '').trim();
+
+  // B4 stability protocol: deliberately tiny lines minimize USB CDC work.
+  if (line === 'R') {
+    return { type: 'READY', receiverMs: 0, radioGroup: 147, radioBand: 50 };
+  }
+
+  if (line === 'H') {
+    return {
+      type: 'HEARTBEAT',
+      receiverMs: 0,
+      lastWebAgeMs: -1,
+      radioPackets: 0,
+      webLines: 0,
+      duplicates: 0,
+      invalid: 0,
+    };
+  }
+
+  const shortWeb = /^(W|T)\|(\d{1,3})$/.exec(line);
+  if (shortWeb) {
+    const sequence = integer(shortWeb[2], 0, 999);
+    if (sequence === null) return null;
+    return {
+      type: 'WEB',
+      bootId: shortWeb[1] === 'T' ? 0 : 1,
+      sequence,
+      senderMs: 0,
+      rssi: 0,
+      receiverMs: sequence,
+    };
+  }
+
+  const fields = line.split('|');
   if (fields[0] !== 'WS1') return null;
 
   if (fields[1] === 'READY' && fields.length === 5) {

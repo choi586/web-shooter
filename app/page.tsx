@@ -117,6 +117,7 @@ export default function Home() {
   const pauseStartedAtRef = useRef(0);
   const audioRef = useRef<WebShooterAudio | null>(null);
   const serialRef = useRef<WebShooterSerial | null>(null);
+  const triggerShotRef = useRef<(source: InputSource) => void>(() => undefined);
   const finishTimerRef = useRef<number | null>(null);
   const shotTimersRef = useRef<number[]>([]);
 
@@ -257,6 +258,10 @@ export default function Home() {
   );
 
   useEffect(() => {
+    triggerShotRef.current = triggerShot;
+  }, [triggerShot]);
+
+  useEffect(() => {
     audioRef.current = new WebShooterAudio();
     return () => audioRef.current?.destroy();
   }, []);
@@ -277,7 +282,7 @@ export default function Home() {
       onMessage: handleMessage,
       onWeb: (message) => {
         setLastWeb(message);
-        triggerShot(message.bootId === 0 ? 'test' : 'serial');
+        triggerShotRef.current(message.bootId === 0 ? 'test' : 'serial');
       },
     });
 
@@ -288,7 +293,7 @@ export default function Home() {
       controller.destroy();
       serialRef.current = null;
     };
-  }, [triggerShot]);
+  }, []);
 
   useEffect(() => {
     phaseRef.current = phase;

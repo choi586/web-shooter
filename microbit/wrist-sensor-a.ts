@@ -19,9 +19,7 @@ const GENERIC_POSE_COS_MAX = 910
 const GENERIC_POSE_COS_MIN = 250
 const MIN_FIRE_SEPARATION_COS = 970
 
-// Radio is intentionally one-way: A sends, B only receives.
-// Six short numeric copies give the wearable link extra margin without ACKs.
-const RETRY_INTERVAL_MS = 60
+// Radio is intentionally one-way: A sends one short packet, B only receives.
 
 let neutralX = 0
 let neutralY = 0
@@ -54,9 +52,6 @@ let cooldownUntil = 0
 
 let sensitivityLevel = 2
 let motionThreshold = 420
-
-let retryCount = 0
-let nextRetryAt = 0
 
 let shotFlashUntil = 0
 
@@ -165,11 +160,6 @@ function orientationIsFiringPose(): boolean {
 
 function issueWebShot(now: number): void {
     radio.sendNumber(WEB_PACKET)
-
-    // B never transmits an acknowledgement. It removes these copies before
-    // forwarding exactly one WEB line to the computer.
-    retryCount = 5
-    nextRetryAt = now + RETRY_INTERVAL_MS
 
     cooldownUntil = now + COOLDOWN_MS
     shotFlashUntil = now + 180
@@ -325,7 +315,8 @@ function renderDisplay(now: number): void {
 
 radio.setGroup(RADIO_GROUP)
 radio.setFrequencyBand(RADIO_BAND)
-radio.setTransmitPower(7)
+// Moderate power is ample at exhibit distance and reduces RF bursts near USB.
+radio.setTransmitPower(3)
 
 // Button A: learn the neutral/resting wrist orientation.
 input.onButtonPressed(Button.A, function () {
@@ -424,8 +415,8 @@ input.onLogoEvent(TouchButtonEvent.Pressed, function () {
 input.setAccelerometerRange(AcceleratorRange.FourG)
 applySensitivity()
 
-// Firmware marker. If A3 is not shown, the old build is still installed.
-basic.showString("A3", 80)
+// Firmware marker. If A4 is not shown, the old build is still installed.
+basic.showString("A4", 80)
 
 // Power-on neutral calibration. Keep the worn wrist still while N is shown.
 basic.showString("N", 80)
@@ -454,12 +445,6 @@ nextDisplayAt = control.millis()
 
 basic.forever(function () {
     let now = control.millis()
-
-    if (retryCount > 0 && now >= nextRetryAt) {
-        radio.sendNumber(WEB_PACKET)
-        retryCount -= 1
-        nextRetryAt = now + RETRY_INTERVAL_MS
-    }
 
     if (!calibrating && now >= nextSampleAt) {
         nextSampleAt = now + SAMPLE_MS

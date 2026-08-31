@@ -1,101 +1,29 @@
-// WEB SHOOTER — USB receiver B
+// WEB SHOOTER — USB receiver B4
 // micro:bit v2 / MakeCode JavaScript
-// Stability build: one-way Radio and single-owner USB Serial output.
+// Minimal Radio interrupt + short USB protocol stability build.
 
 const RADIO_GROUP = 147
 const RADIO_BAND = 50
 const WEB_PACKET = 73147
-
 const SERIAL_HEARTBEAT_MS = 1000
-const DUPLICATE_WINDOW_MS = 500
 
-let radioPackets = 0
-let webLines = 0
-let duplicatePackets = 0
-let invalidPackets = 0
-
-let lastWebAt = -1
-
-let localTestSequence = 0
-let remoteSequence = 0
-let radioPulse = false
-let radioIgnoreUntil = 0
-
-// Radio and button callbacks only place work in this mailbox. The forever
-// loop below is the only fiber that writes to USB Serial.
-let pendingWeb = false
-let pendingBoot = 0
+// 0: none, 1: Radio shot, 2: receiver-local test.
+let pendingKind = 0
 let pendingSequence = 0
-let pendingSenderTime = 0
-let pendingRssi = 0
-let pendingReceiverTime = 0
-let pendingStatus = false
+let radioPulse = false
+let pendingHeartbeat = false
+
+let remoteSequence = Math.randomRange(0, 999)
+let localSequence = Math.randomRange(0, 999)
 
 let webFlashUntil = 0
 let statusFlashUntil = 0
-
 let nextHeartbeatAt = 0
 let nextDisplayAt = 0
 
-function lastWebAge(now: number): number {
-    if (lastWebAt < 0) {
-        return -1
-    }
-    return now - lastWebAt
-}
-
-function emitWebLine(
-    boot: number,
-    sequence: number,
-    senderTime: number,
-    rssi: number,
-    receiverTime: number
-): void {
-    serial.writeLine(
-        "WS1|WEB|" +
-        boot + "|" +
-        sequence + "|" +
-        senderTime + "|" +
-        rssi + "|" +
-        receiverTime
-    )
-}
-
-function emitStatus(type: string): void {
-    let now = control.millis()
-
-    serial.writeLine(
-        "WS1|" + type + "|" +
-        now + "|" +
-        lastWebAge(now) + "|" +
-        radioPackets + "|" +
-        webLines + "|" +
-        duplicatePackets + "|" +
-        invalidPackets
-    )
-}
-
-function queueWeb(
-    boot: number,
-    sequence: number,
-    senderTime: number,
-    rssi: number,
-    receiverTime: number
-): void {
-    pendingBoot = boot
+function queueShot(kind: number, sequence: number): void {
+    pendingKind = kind
     pendingSequence = sequence
-    pendingSenderTime = senderTime
-    pendingRssi = rssi
-    pendingReceiverTime = receiverTime
-    pendingWeb = true
-}
-
-function queueLocalTest(): void {
-    let now = control.millis()
-    localTestSequence = (localTestSequence + 1) % 1000
-
-    // Boot/session 0 is reserved for receiver-local tests.
-    queueWeb(0, localTestSequence, 0, 0, now)
 }
 
 function drawBurst(): void {
@@ -135,51 +63,42 @@ function renderDisplay(now: number): void {
         return
     }
 
-    // Center dot means receiver and USB heartbeat loop are ready.
+    // Center dot means ready. The corner blink proves the main loop is alive.
     led.plot(2, 2)
+    if (Math.floor(now / 500) % 2 == 0) {
+        led.plot(4, 4)
+    }
 }
 
 serial.redirectToUSB()
 serial.setBaudRate(BaudRate.BaudRate115200)
-// MakeCode otherwise pads writeLine output to 32 characters.
 serial.setWriteLinePadding(0)
 
 radio.setGroup(RADIO_GROUP)
 radio.setFrequencyBand(RADIO_BAND)
 
 radio.onReceivedNumber(function (packet: number) {
-    // Keep the interrupt path deliberately tiny: no Serial, RSSI, parsing,
-    // splitting, acknowledgement, display, or timing work happens here.
-    radioPackets += 1
-
-    if (packet != WEB_PACKET) {
-        invalidPackets += 1
-        return
+    // The Radio callback does only one comparison and one flag write.
+    if (packet == WEB_PACKET) {
+        radioPulse = true
     }
-
-    radioPulse = true
 })
 
-// Button A: queue a local shot without wrist unit A.
+// Button A: local USB path test.
 input.onButtonPressed(Button.A, function () {
-    queueLocalTest()
+    localSequence = (localSequence + 1) % 1000
+    queueShot(2, localSequence)
 })
 
-// Button B: queue status output. Serial still writes from the main loop only.
+// Button B: request an immediate short heartbeat.
 input.onButtonPressed(Button.B, function () {
-    pendingStatus = true
     statusFlashUntil = control.millis() + 220
+    pendingHeartbeat = true
 })
 
-// Firmware marker. If B3 is not shown, the old build is still installed.
-basic.showString("B3", 80)
-
-serial.writeLine(
-    "WS1|READY|" +
-    control.millis() + "|" +
-    RADIO_GROUP + "|" +
-    RADIO_BAND
-)
+// Firmware marker. If B4 is not shown, the old build is still installed.
+basic.showString("B4", 80)
+serial.writeLine("R")
 
 nextHeartbeatAt = control.millis() + 500
 nextDisplayAt = control.millis()
@@ -189,46 +108,32 @@ basic.forever(function () {
 
     if (radioPulse) {
         radioPulse = false
-
-        if (now >= radioIgnoreUntil) {
-            radioIgnoreUntil = now + DUPLICATE_WINDOW_MS
-            remoteSequence = (remoteSequence + 1) % 1000
-            queueWeb(1, remoteSequence, now, 0, now)
-        } else {
-            duplicatePackets += 1
-        }
+        remoteSequence = (remoteSequence + 1) % 1000
+        queueShot(1, remoteSequence)
     }
 
-    if (pendingWeb) {
-        // Copy the mailbox before allowing the Radio fiber to fill it again.
-        let boot = pendingBoot
+    if (pendingKind != 0) {
+        let kind = pendingKind
         let sequence = pendingSequence
-        let senderTime = pendingSenderTime
-        let rssi = pendingRssi
-        let receiverTime = pendingReceiverTime
-        pendingWeb = false
+        pendingKind = 0
 
-        emitWebLine(
-            boot,
-            sequence,
-            senderTime,
-            rssi,
-            receiverTime
-        )
+        if (kind == 1) {
+            serial.writeLine("W|" + sequence)
+        } else {
+            serial.writeLine("T|" + sequence)
+        }
 
-        webLines += 1
-        lastWebAt = now
         webFlashUntil = now + 220
     }
 
-    if (pendingStatus) {
-        pendingStatus = false
-        emitStatus("STATUS")
+    if (pendingHeartbeat) {
+        pendingHeartbeat = false
+        serial.writeLine("H")
     }
 
     if (now >= nextHeartbeatAt) {
         nextHeartbeatAt = now + SERIAL_HEARTBEAT_MS
-        emitStatus("HEARTBEAT")
+        serial.writeLine("H")
     }
 
     if (now >= nextDisplayAt) {

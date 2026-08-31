@@ -16,6 +16,33 @@ test('parses receiver ready messages', () => {
   });
 });
 
+test('parses the B4 short stability protocol', () => {
+  assert.deepEqual(parseReceiverLine('R\r'), {
+    type: 'READY',
+    receiverMs: 0,
+    radioGroup: 147,
+    radioBand: 50,
+  });
+  assert.deepEqual(parseReceiverLine('H'), {
+    type: 'HEARTBEAT',
+    receiverMs: 0,
+    lastWebAgeMs: -1,
+    radioPackets: 0,
+    webLines: 0,
+    duplicates: 0,
+    invalid: 0,
+  });
+  assert.deepEqual(parseReceiverLine('W|37'), {
+    type: 'WEB',
+    bootId: 1,
+    sequence: 37,
+    senderMs: 0,
+    rssi: 0,
+    receiverMs: 37,
+  });
+  assert.equal(parseReceiverLine('W|1000'), null);
+});
+
 test('parses web messages including RSSI', () => {
   assert.deepEqual(parseReceiverLine('WS1|WEB|42|17|8192|-61|9250'), {
     type: 'WEB',
