@@ -32,7 +32,7 @@
 
 1. [`microbit/wrist-sensor-a.ts`](microbit/wrist-sensor-a.ts)를 MakeCode JavaScript에 붙여 넣고 손목 센서 A에 다운로드합니다.
 2. [`microbit/usb-receiver-b.ts`](microbit/usb-receiver-b.ts)를 별도 MakeCode 프로젝트에 붙여 넣고 수신기 B에 다운로드합니다.
-3. A를 손목에 찬 상태로 켜고, 중립 자세에서 기다린 뒤 손목을 꺾은 발사 자세로 B 버튼을 눌러 보정합니다.
+3. A를 찬 팔을 접은 상태로 켜서 `N`을 저장하고, 팔을 완전히 펼친 상태에서 B 버튼을 눌러 `F`를 저장합니다.
 4. B를 노트북에 USB로 연결합니다.
 5. 웹앱을 최신 Chrome의 직접 HTTPS 주소로 열고 **운영 설정 → micro:bit B 연결**을 누릅니다.
 6. 장치 선택창에서 micro:bit를 고르고 **운영 시작**을 누릅니다.

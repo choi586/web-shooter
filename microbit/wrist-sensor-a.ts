@@ -1,4 +1,4 @@
-// WEB SHOOTER — wrist sensor A7
+// WEB SHOOTER — wrist sensor A8
 // micro:bit v2 / MakeCode JavaScript
 
 const RADIO_GROUP = 147
@@ -8,18 +8,14 @@ const WEB_PACKET = 73147
 const SAMPLE_MS = 20
 const POSE_HOLD_MS = 160
 const POSE_STILL_MOTION_MAX = 180
-const ARM_WINDOW_MS = 1200
-const POSE_LOSS_GRACE_MS = 450
-const POSE_RELEASE_MS = 180
+const EXTENSION_WINDOW_MS = 900
 const COOLDOWN_MS = 650
 const RADIO_SETTLE_DELAY_MS = 220
 
 // Unit-vector dot products are scaled to 1000.
 // 900 is approximately a 26-degree cone around the calibrated pose.
 const POSE_COS_MIN = 900
-const GENERIC_POSE_COS_MAX = 910
-const GENERIC_POSE_COS_MIN = 250
-const MIN_FIRE_SEPARATION_COS = 970
+const MIN_FIRE_SEPARATION_COS = 900
 
 // Radio is intentionally one-way. Gesture detection queues one transmission
 // after the wrist has settled instead of transmitting at peak acceleration.
@@ -44,14 +40,11 @@ let gravityZ = 1024
 
 let calibrating = true
 
-// 0: waiting, 1: holding the wrist pose, 2: armed for an impulse.
+// 0: waiting for bent N pose, 1: holding bent N pose, 2: armed to extend.
 let gestureState = 0
-let readyForPose = true
 let poseStartedAt = 0
-let lastPoseAt = 0
-let armedUntil = 0
+let extensionStartedAt = -1
 let departureMotion = 0
-let releaseStartedAt = -1
 let cooldownUntil = 0
 
 let sensitivityLevel = 2
@@ -112,14 +105,11 @@ function resetMotionFilter(): void {
     gravityZ = input.acceleration(Dimension.Z)
 }
 
-function resetGesture(requireRelease: boolean): void {
+function resetGesture(): void {
     gestureState = 0
-    readyForPose = !requireRelease
     poseStartedAt = 0
-    lastPoseAt = 0
-    armedUntil = 0
+    extensionStartedAt = -1
     departureMotion = 0
-    releaseStartedAt = -1
 }
 
 function applySensitivity(): void {
@@ -132,11 +122,11 @@ function applySensitivity(): void {
     }
 }
 
-function orientationIsFiringPose(): boolean {
-    if (!neutralReady) {
-        return false
-    }
-
+function orientationDot(
+    poseX: number,
+    poseY: number,
+    poseZ: number
+): number {
     let magnitude = Math.sqrt(
         gravityX * gravityX +
         gravityY * gravityY +
@@ -144,25 +134,24 @@ function orientationIsFiringPose(): boolean {
     )
 
     if (magnitude < 100) {
-        return false
+        return -1000
     }
 
     let ux = gravityX * 1000 / magnitude
     let uy = gravityY * 1000 / magnitude
     let uz = gravityZ * 1000 / magnitude
 
-    if (firePoseReady) {
-        return unitDot(ux, uy, uz, fireX, fireY, fireZ) >= POSE_COS_MIN
-    }
+    return unitDot(ux, uy, uz, poseX, poseY, poseZ)
+}
 
-    // Safe fallback until button B is used to learn the exact firing pose.
-    let neutralDot = unitDot(
-        ux, uy, uz,
-        neutralX, neutralY, neutralZ
-    )
+function orientationIsStartPose(): boolean {
+    return neutralReady &&
+        orientationDot(neutralX, neutralY, neutralZ) >= POSE_COS_MIN
+}
 
-    return neutralDot <= GENERIC_POSE_COS_MAX &&
-        neutralDot >= GENERIC_POSE_COS_MIN
+function orientationIsFiringPose(): boolean {
+    return firePoseReady &&
+        orientationDot(fireX, fireY, fireZ) >= POSE_COS_MIN
 }
 
 function issueWebShot(now: number): void {
@@ -171,7 +160,7 @@ function issueWebShot(now: number): void {
 
     cooldownUntil = now + COOLDOWN_MS
 
-    resetGesture(true)
+    resetGesture()
 }
 
 function processGesture(now: number): void {
@@ -194,31 +183,11 @@ function processGesture(now: number): void {
         motionZ * motionZ
     )
 
-    let inPose = orientationIsFiringPose()
-
-    // After a shot, the wrist must leave the firing pose before re-arming.
-    if (!readyForPose) {
-        if (!inPose) {
-            if (releaseStartedAt < 0) {
-                releaseStartedAt = now
-            }
-
-            if (
-                now >= cooldownUntil &&
-                now - releaseStartedAt >= POSE_RELEASE_MS
-            ) {
-                readyForPose = true
-                releaseStartedAt = -1
-                gestureState = 0
-            }
-        } else {
-            releaseStartedAt = -1
-        }
-        return
-    }
+    let inStartPose = orientationIsStartPose()
+    let inFiringPose = orientationIsFiringPose()
 
     if (gestureState == 0) {
-        if (inPose) {
+        if (firePoseReady && inStartPose) {
             gestureState = 1
             poseStartedAt = now
         }
@@ -226,13 +195,13 @@ function processGesture(now: number): void {
     }
 
     if (gestureState == 1) {
-        if (!inPose) {
-            gestureState = 0
+        if (!inStartPose) {
+            resetGesture()
             return
         }
 
-        // Entering/folding into the pose must never fire. Arm only after the
-        // bent elbow has become still for a short, deliberate hold.
+        // Folding into N is setup, never a shot. Arm only after the bent arm
+        // is held still long enough to show the target.
         if (motion > POSE_STILL_MOTION_MAX) {
             poseStartedAt = now
             return
@@ -240,11 +209,10 @@ function processGesture(now: number): void {
 
         if (now - poseStartedAt >= POSE_HOLD_MS) {
             gestureState = 2
-            armedUntil = now + ARM_WINDOW_MS
-            lastPoseAt = now
+            extensionStartedAt = -1
             departureMotion = 0
 
-            // Discard the movement used to enter the pose.
+            // Discard the movement used to fold into the start pose.
             gravityX = ax
             gravityY = ay
             gravityZ = az
@@ -253,27 +221,31 @@ function processGesture(now: number): void {
     }
 
     if (gestureState == 2) {
-        // Retain the recent peak while the orientation filter catches up with
-        // the beginning of the arm-extension movement.
-        departureMotion = Math.max(motion, departureMotion * 0.9)
-
-        if (inPose) {
-            lastPoseAt = now
+        // The target is shown while the arm remains in the bent N pose.
+        if (extensionStartedAt < 0 && inStartPose) {
             return
         }
 
+        if (extensionStartedAt < 0) {
+            extensionStartedAt = now
+            departureMotion = motion
+        } else {
+            departureMotion = Math.max(departureMotion, motion)
+        }
+
+        // Fire only after travelling from the bent N pose into the extended
+        // F pose learned with button B.
         if (
-            now > armedUntil ||
-            now - lastPoseAt > POSE_LOSS_GRACE_MS
+            inFiringPose &&
+            now >= cooldownUntil &&
+            departureMotion >= motionThreshold
         ) {
-            resetGesture(true)
+            issueWebShot(now)
             return
         }
 
-        // Fire only after leaving the learned bent-arm pose. Motion while
-        // entering or remaining in that pose is deliberately ignored.
-        if (now >= cooldownUntil && departureMotion >= motionThreshold) {
-            issueWebShot(now)
+        if (now - extensionStartedAt > EXTENSION_WINDOW_MS) {
+            resetGesture()
         }
     }
 }
@@ -340,7 +312,7 @@ radio.setFrequencyBand(RADIO_BAND)
 // One full-power packet tolerates body shielding without a receiver event burst.
 radio.setTransmitPower(7)
 
-// Button A: learn the neutral/resting wrist orientation.
+// Button A: learn the bent-arm neutral/start orientation.
 input.onButtonPressed(Button.A, function () {
     if (calibrating) {
         return
@@ -357,7 +329,7 @@ input.onButtonPressed(Button.A, function () {
         firePoseReady = false
 
         resetMotionFilter()
-        resetGesture(false)
+        resetGesture()
         cooldownUntil = control.millis() + 250
         basic.showIcon(IconNames.Yes, 250)
     } else {
@@ -368,7 +340,7 @@ input.onButtonPressed(Button.A, function () {
     nextDisplayAt = 0
 })
 
-// Button B: learn the bent-wrist firing pose.
+// Button B: learn the fully extended firing/end orientation.
 input.onButtonPressed(Button.B, function () {
     if (calibrating) {
         return
@@ -395,7 +367,7 @@ input.onButtonPressed(Button.B, function () {
     }
 
     resetMotionFilter()
-    resetGesture(true)
+    resetGesture()
     cooldownUntil = control.millis() + 300
 
     if (accepted) {
@@ -426,7 +398,7 @@ input.onLogoEvent(TouchButtonEvent.Pressed, function () {
     applySensitivity()
 
     resetMotionFilter()
-    resetGesture(true)
+    resetGesture()
     cooldownUntil = control.millis() + 300
 
     basic.showNumber(sensitivityLevel, 150)
@@ -437,8 +409,8 @@ input.onLogoEvent(TouchButtonEvent.Pressed, function () {
 input.setAccelerometerRange(AcceleratorRange.FourG)
 applySensitivity()
 
-// Firmware marker. If A7 is not shown, the old build is still installed.
-basic.showString("A7", 80)
+// Firmware marker. If A8 is not shown, the old build is still installed.
+basic.showString("A8", 80)
 
 // Power-on neutral calibration. Keep the worn wrist still while N is shown.
 basic.showString("N", 80)
@@ -459,7 +431,7 @@ if (autoCalibrated) {
 }
 
 resetMotionFilter()
-resetGesture(false)
+resetGesture()
 calibrating = false
 
 nextSampleAt = control.millis()
