@@ -24,6 +24,8 @@
 
 ## 가장 빠른 설치
 
+한 번에 받으려면 [`release/WEB_SHOOTER_microbit_source.zip`](release/WEB_SHOOTER_microbit_source.zip)을 내려받으세요. 손목 센서 A 코드, USB 수신기 B 코드, 보정 설명서가 들어 있습니다.
+
 1. [`microbit/wrist-sensor-a.ts`](microbit/wrist-sensor-a.ts)를 MakeCode JavaScript에 붙여 넣고 손목 센서 A에 다운로드합니다.
 2. [`microbit/usb-receiver-b.ts`](microbit/usb-receiver-b.ts)를 별도 MakeCode 프로젝트에 붙여 넣고 수신기 B에 다운로드합니다.
 3. A를 손목에 찬 상태로 켜고, 중립 자세에서 기다린 뒤 손목을 꺾은 발사 자세로 B 버튼을 눌러 보정합니다.
