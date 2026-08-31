@@ -15,6 +15,7 @@ import { WebShooterSerial, type SerialState } from './serial';
 type Phase = 'attract' | 'play' | 'result';
 type InputSource = 'serial' | 'keyboard' | 'test' | 'demo';
 type HandSide = 'right' | 'left';
+type AudioState = 'locked' | 'ready';
 
 type DailyStats = {
   date: string;
@@ -92,6 +93,7 @@ export default function Home() {
   const [demoMode, setDemoMode] = useState(false);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(0.72);
+  const [audioState, setAudioState] = useState<AudioState>('locked');
   const [reducedMotion, setReducedMotion] = useState(false);
   const [handSide, setHandSide] = useState<HandSide>('right');
   const [fullscreen, setFullscreen] = useState(false);
@@ -124,6 +126,12 @@ export default function Home() {
   const setCurrentPhase = useCallback((nextPhase: Phase) => {
     phaseRef.current = nextPhase;
     setPhase(nextPhase);
+  }, []);
+
+  const activateAudio = useCallback(async () => {
+    const ready = (await audioRef.current?.activate()) ?? false;
+    setAudioState(ready ? 'ready' : 'locked');
+    return ready;
   }, []);
 
   const clearShotTimers = useCallback(() => {
@@ -167,7 +175,7 @@ export default function Home() {
     setPaused(false);
     pausedRef.current = false;
     setBurstText('COMPLETE!');
-    audioRef.current?.playFinish();
+    void audioRef.current?.playFinish();
 
     if (sessionIsRealRef.current) {
       setStats((current) => ({
@@ -237,11 +245,11 @@ export default function Home() {
       setShotId((current) => current + 1);
       setShotActive(true);
       setBurstText('THWIP!');
-      audioRef.current?.playShot();
+      void audioRef.current?.playShot();
 
       const hitTimer = window.setTimeout(() => {
         setBurstText('HIT! +100');
-        audioRef.current?.playHit(
+        void audioRef.current?.playHit(
           !presentationOnly && endAtRef.current > 0 && endAtRef.current - performance.now() < 1300,
         );
       }, 285);
@@ -265,6 +273,21 @@ export default function Home() {
     audioRef.current = new WebShooterAudio();
     return () => audioRef.current?.destroy();
   }, []);
+
+  useEffect(() => {
+    // Hardware shots are not browser gestures. Prime Web Audio on the first
+    // operator interaction so later Serial shots can always make sound.
+    const unlock = () => {
+      void activateAudio();
+    };
+
+    window.addEventListener('pointerdown', unlock, { capture: true, once: true });
+    window.addEventListener('keydown', unlock, { capture: true, once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+    };
+  }, [activateAudio]);
 
   useEffect(() => {
     const handleMessage = (message: ReceiverMessage) => {
@@ -465,22 +488,37 @@ export default function Home() {
   }, []);
 
   const connectReceiver = useCallback(async () => {
-    await audioRef.current?.activate();
+    const audioPromise = activateAudio();
     await serialRef.current?.requestAndConnect();
-  }, []);
+    await audioPromise;
+  }, [activateAudio]);
 
   const disconnectReceiver = useCallback(async () => {
     await serialRef.current?.disconnect();
   }, []);
 
   const startOperation = useCallback(() => {
-    void audioRef.current?.activate();
+    void activateAudio();
     if (!document.fullscreenElement) void document.documentElement.requestFullscreen().catch(() => undefined);
     if (connection !== 'ready' && connection !== 'connecting' && connection !== 'syncing') {
       void serialRef.current?.requestAndConnect();
     }
     setOperatorOpen(false);
-  }, [connection]);
+  }, [activateAudio, connection]);
+
+  const testAudio = useCallback(async () => {
+    if (muted) {
+      audioRef.current?.setMuted(false);
+      setMuted(false);
+    }
+    if (volume <= 0) {
+      audioRef.current?.setVolume(0.72);
+      setVolume(0.72);
+    }
+
+    const ready = await activateAudio();
+    if (ready) await audioRef.current?.playShot();
+  }, [activateAudio, muted, volume]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -489,7 +527,7 @@ export default function Home() {
 
       if (event.code === 'Space') {
         event.preventDefault();
-        void audioRef.current?.activate();
+        void activateAudio();
         triggerShot('keyboard');
       } else if (event.key.toLowerCase() === 'r') {
         resetExperience();
@@ -506,7 +544,7 @@ export default function Home() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [resetExperience, toggleFullscreen, triggerShot]);
+  }, [activateAudio, resetExperience, toggleFullscreen, triggerShot]);
 
   const target = targets[targetIndex];
   const effectStyle = useMemo(() => {
@@ -753,8 +791,7 @@ export default function Home() {
                     type="button"
                     className="secondary-button"
                     onClick={() => {
-                      void audioRef.current?.activate();
-                      triggerShot('test');
+                      void activateAudio().then(() => triggerShot('test'));
                     }}
                   >
                     시험 발사
@@ -850,6 +887,9 @@ export default function Home() {
                     {muted ? '음소거 해제' : '음소거'}
                   </button>
                 </div>
+                <p className="detail-copy">
+                  {muted ? '현재 음소거 상태입니다.' : audioState === 'ready' ? '소리 준비됨' : '소리 테스트를 눌러 잠금을 해제하세요.'}
+                </p>
                 <label className="volume-control">
                   <span>볼륨</span>
                   <input
@@ -863,6 +903,11 @@ export default function Home() {
                   />
                   <b>{Math.round(volume * 100)}%</b>
                 </label>
+                <div className="button-row">
+                  <button type="button" className="secondary-button" onClick={() => void testAudio()}>
+                    소리 테스트
+                  </button>
+                </div>
               </section>
 
               <section className="control-section stats-section">

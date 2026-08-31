@@ -9,17 +9,22 @@ export class WebShooterAudio {
   private volume = 0.72;
   private muted = false;
 
-  async activate() {
-    if (!this.context) {
-      const AudioContextClass = window.AudioContext || (window as BrowserWindow).webkitAudioContext;
-      if (!AudioContextClass) return;
-      this.context = new AudioContextClass();
-      this.master = this.context.createGain();
-      this.master.connect(this.context.destination);
-      this.applyVolume();
-    }
+  async activate(): Promise<boolean> {
+    try {
+      if (!this.context) {
+        const AudioContextClass = window.AudioContext || (window as BrowserWindow).webkitAudioContext;
+        if (!AudioContextClass) return false;
+        this.context = new AudioContextClass();
+        this.master = this.context.createGain();
+        this.master.connect(this.context.destination);
+      }
 
-    if (this.context.state === 'suspended') await this.context.resume();
+      if (this.context.state !== 'running') await this.context.resume();
+      this.applyVolume();
+      return this.context.state === 'running';
+    } catch {
+      return false;
+    }
   }
 
   setVolume(value: number) {
@@ -37,8 +42,9 @@ export class WebShooterAudio {
     this.master.gain.setTargetAtTime(this.muted ? 0 : this.volume, this.context.currentTime, 0.012);
   }
 
-  playShot() {
-    if (!this.context || !this.master || this.muted) return;
+  async playShot(): Promise<boolean> {
+    const active = await this.activate();
+    if (!active || !this.context || !this.master || this.muted) return active;
     const now = this.context.currentTime;
 
     const snap = this.context.createOscillator();
@@ -72,10 +78,12 @@ export class WebShooterAudio {
     noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.23);
     noise.connect(filter).connect(noiseGain).connect(this.master);
     noise.start(now);
+    return true;
   }
 
-  playHit(emphasis = false) {
-    if (!this.context || !this.master || this.muted) return;
+  async playHit(emphasis = false): Promise<boolean> {
+    const active = await this.activate();
+    if (!active || !this.context || !this.master || this.muted) return active;
     const now = this.context.currentTime;
     const frequencies = emphasis ? [110, 165, 247] : [130, 195];
 
@@ -92,10 +100,12 @@ export class WebShooterAudio {
       oscillator.start(now + index * 0.018);
       oscillator.stop(now + 0.35);
     });
+    return true;
   }
 
-  playFinish() {
-    if (!this.context || !this.master || this.muted) return;
+  async playFinish(): Promise<boolean> {
+    const active = await this.activate();
+    if (!active || !this.context || !this.master || this.muted) return active;
     const now = this.context.currentTime;
     [196, 247, 294, 392].forEach((frequency, index) => {
       const oscillator = this.context!.createOscillator();
@@ -110,6 +120,7 @@ export class WebShooterAudio {
       oscillator.start(start);
       oscillator.stop(start + 0.32);
     });
+    return true;
   }
 
   destroy() {

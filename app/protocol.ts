@@ -44,7 +44,7 @@ const integer = (value: string, min: number, max: number) => {
 export function parseReceiverLine(raw: string): ReceiverMessage | null {
   const line = raw.replace(/\r$/, '').trim();
 
-  // B4/B5 stability protocol: deliberately tiny lines minimize USB CDC work.
+  // B4-B6 stability protocol: deliberately tiny lines minimize USB CDC work.
   if (line === 'R') {
     return { type: 'READY', receiverMs: 0, radioGroup: 147, radioBand: 50 };
   }
