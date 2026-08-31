@@ -1,4 +1,4 @@
-// WEB SHOOTER — wrist sensor A6
+// WEB SHOOTER — wrist sensor A7
 // micro:bit v2 / MakeCode JavaScript
 
 const RADIO_GROUP = 147
@@ -6,9 +6,10 @@ const RADIO_BAND = 50
 const WEB_PACKET = 73147
 
 const SAMPLE_MS = 20
-const POSE_HOLD_MS = 100
+const POSE_HOLD_MS = 160
+const POSE_STILL_MOTION_MAX = 180
 const ARM_WINDOW_MS = 1200
-const POSE_LOSS_GRACE_MS = 320
+const POSE_LOSS_GRACE_MS = 450
 const POSE_RELEASE_MS = 180
 const COOLDOWN_MS = 650
 const RADIO_SETTLE_DELAY_MS = 220
@@ -49,6 +50,7 @@ let readyForPose = true
 let poseStartedAt = 0
 let lastPoseAt = 0
 let armedUntil = 0
+let departureMotion = 0
 let releaseStartedAt = -1
 let cooldownUntil = 0
 
@@ -116,6 +118,7 @@ function resetGesture(requireRelease: boolean): void {
     poseStartedAt = 0
     lastPoseAt = 0
     armedUntil = 0
+    departureMotion = 0
     releaseStartedAt = -1
 }
 
@@ -228,10 +231,18 @@ function processGesture(now: number): void {
             return
         }
 
+        // Entering/folding into the pose must never fire. Arm only after the
+        // bent elbow has become still for a short, deliberate hold.
+        if (motion > POSE_STILL_MOTION_MAX) {
+            poseStartedAt = now
+            return
+        }
+
         if (now - poseStartedAt >= POSE_HOLD_MS) {
             gestureState = 2
             armedUntil = now + ARM_WINDOW_MS
             lastPoseAt = now
+            departureMotion = 0
 
             // Discard the movement used to enter the pose.
             gravityX = ax
@@ -242,8 +253,13 @@ function processGesture(now: number): void {
     }
 
     if (gestureState == 2) {
+        // Retain the recent peak while the orientation filter catches up with
+        // the beginning of the arm-extension movement.
+        departureMotion = Math.max(motion, departureMotion * 0.9)
+
         if (inPose) {
             lastPoseAt = now
+            return
         }
 
         if (
@@ -254,7 +270,9 @@ function processGesture(now: number): void {
             return
         }
 
-        if (now >= cooldownUntil && motion >= motionThreshold) {
+        // Fire only after leaving the learned bent-arm pose. Motion while
+        // entering or remaining in that pose is deliberately ignored.
+        if (now >= cooldownUntil && departureMotion >= motionThreshold) {
             issueWebShot(now)
         }
     }
@@ -419,8 +437,8 @@ input.onLogoEvent(TouchButtonEvent.Pressed, function () {
 input.setAccelerometerRange(AcceleratorRange.FourG)
 applySensitivity()
 
-// Firmware marker. If A6 is not shown, the old build is still installed.
-basic.showString("A6", 80)
+// Firmware marker. If A7 is not shown, the old build is still installed.
+basic.showString("A7", 80)
 
 // Power-on neutral calibration. Keep the worn wrist still while N is shown.
 basic.showString("N", 80)
