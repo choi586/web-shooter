@@ -723,7 +723,7 @@ export default function Home() {
                   </div>
                   <div>
                     <dt>무선 세기</dt>
-                    <dd>{lastWeb ? `${lastWeb.rssi} dBm` : '—'}</dd>
+                    <dd>{lastWeb && lastWeb.rssi !== 0 ? `${lastWeb.rssi} dBm` : '—'}</dd>
                   </div>
                   <div>
                     <dt>수신 웹</dt>

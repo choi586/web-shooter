@@ -2,23 +2,24 @@
 // micro:bit v2 / MakeCode JavaScript
 // Stability build: one-way Radio and single-owner USB Serial output.
 
-const RADIO_GROUP = 71
-const RADIO_BAND = 7
+const RADIO_GROUP = 147
+const RADIO_BAND = 50
+const WEB_PACKET = 73147
 
 const SERIAL_HEARTBEAT_MS = 1000
-const DUPLICATE_WINDOW_MS = 1200
+const DUPLICATE_WINDOW_MS = 500
 
 let radioPackets = 0
 let webLines = 0
 let duplicatePackets = 0
 let invalidPackets = 0
 
-let lastRadioBoot = -1
-let lastRadioSequence = -1
-let lastRadioUniqueAt = -1
 let lastWebAt = -1
 
 let localTestSequence = 0
+let remoteSequence = 0
+let radioPulse = false
+let radioIgnoreUntil = 0
 
 // Radio and button callbacks only place work in this mailbox. The forever
 // loop below is the only fiber that writes to USB Serial.
@@ -31,7 +32,6 @@ let pendingReceiverTime = 0
 let pendingStatus = false
 
 let webFlashUntil = 0
-let badFlashUntil = 0
 let statusFlashUntil = 0
 
 let nextHeartbeatAt = 0
@@ -114,18 +114,6 @@ function drawBurst(): void {
     led.plot(4, 4)
 }
 
-function drawError(): void {
-    led.plot(0, 0)
-    led.plot(1, 1)
-    led.plot(2, 2)
-    led.plot(3, 3)
-    led.plot(4, 4)
-    led.plot(4, 0)
-    led.plot(3, 1)
-    led.plot(1, 3)
-    led.plot(0, 4)
-}
-
 function drawCheck(): void {
     led.plot(0, 2)
     led.plot(1, 3)
@@ -136,11 +124,6 @@ function drawCheck(): void {
 
 function renderDisplay(now: number): void {
     basic.clearScreen()
-
-    if (now < badFlashUntil) {
-        drawError()
-        return
-    }
 
     if (now < webFlashUntil) {
         drawBurst()
@@ -165,50 +148,16 @@ radio.setGroup(RADIO_GROUP)
 radio.setFrequencyBand(RADIO_BAND)
 
 radio.onReceivedNumber(function (packet: number) {
-    let now = control.millis()
-
-    // This callback never transmits Radio and never writes USB Serial.
-    let rssi = radio.receivedPacket(
-        RadioPacketProperty.SignalStrength
-    )
-
+    // Keep the interrupt path deliberately tiny: no Serial, RSSI, parsing,
+    // splitting, acknowledgement, display, or timing work happens here.
     radioPackets += 1
 
-    let boot = Math.idiv(packet, 1000)
-    let sequence = packet % 1000
-
-    if (
-        packet != Math.floor(packet) ||
-        !(boot >= 1 && boot <= 255) ||
-        !(sequence >= 0 && sequence <= 999)
-    ) {
+    if (packet != WEB_PACKET) {
         invalidPackets += 1
-        badFlashUntil = now + 180
         return
     }
 
-    let duplicate =
-        lastRadioUniqueAt >= 0 &&
-        boot == lastRadioBoot &&
-        sequence == lastRadioSequence &&
-        now - lastRadioUniqueAt <= DUPLICATE_WINDOW_MS
-
-    if (duplicate) {
-        duplicatePackets += 1
-        return
-    }
-
-    lastRadioBoot = boot
-    lastRadioSequence = sequence
-    lastRadioUniqueAt = now
-
-    queueWeb(
-        boot,
-        sequence,
-        now,
-        rssi,
-        now
-    )
+    radioPulse = true
 })
 
 // Button A: queue a local shot without wrist unit A.
@@ -222,6 +171,9 @@ input.onButtonPressed(Button.B, function () {
     statusFlashUntil = control.millis() + 220
 })
 
+// Firmware marker. If B3 is not shown, the old build is still installed.
+basic.showString("B3", 80)
+
 serial.writeLine(
     "WS1|READY|" +
     control.millis() + "|" +
@@ -234,6 +186,18 @@ nextDisplayAt = control.millis()
 
 basic.forever(function () {
     let now = control.millis()
+
+    if (radioPulse) {
+        radioPulse = false
+
+        if (now >= radioIgnoreUntil) {
+            radioIgnoreUntil = now + DUPLICATE_WINDOW_MS
+            remoteSequence = (remoteSequence + 1) % 1000
+            queueWeb(1, remoteSequence, now, 0, now)
+        } else {
+            duplicatePackets += 1
+        }
+    }
 
     if (pendingWeb) {
         // Copy the mailbox before allowing the Radio fiber to fill it again.

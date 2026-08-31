@@ -1,8 +1,9 @@
 // WEB SHOOTER — wrist sensor A
 // micro:bit v2 / MakeCode JavaScript
 
-const RADIO_GROUP = 71
-const RADIO_BAND = 7
+const RADIO_GROUP = 147
+const RADIO_BAND = 50
+const WEB_PACKET = 73147
 
 const SAMPLE_MS = 20
 const POSE_HOLD_MS = 100
@@ -54,10 +55,6 @@ let cooldownUntil = 0
 let sensitivityLevel = 2
 let motionThreshold = 420
 
-let bootId = Math.randomRange(1, 255)
-let shotSequence = Math.randomRange(0, 999)
-
-let pendingPacket = 0
 let retryCount = 0
 let nextRetryAt = 0
 
@@ -167,12 +164,7 @@ function orientationIsFiringPose(): boolean {
 }
 
 function issueWebShot(now: number): void {
-    shotSequence = (shotSequence + 1) % 1000
-
-    // bootId 1..255 and sequence 0..999 fit in one small integer packet.
-    pendingPacket = bootId * 1000 + shotSequence
-
-    radio.sendNumber(pendingPacket)
+    radio.sendNumber(WEB_PACKET)
 
     // B never transmits an acknowledgement. It removes these copies before
     // forwarding exactly one WEB line to the computer.
@@ -432,6 +424,9 @@ input.onLogoEvent(TouchButtonEvent.Pressed, function () {
 input.setAccelerometerRange(AcceleratorRange.FourG)
 applySensitivity()
 
+// Firmware marker. If A3 is not shown, the old build is still installed.
+basic.showString("A3", 80)
+
 // Power-on neutral calibration. Keep the worn wrist still while N is shown.
 basic.showString("N", 80)
 
@@ -461,7 +456,7 @@ basic.forever(function () {
     let now = control.millis()
 
     if (retryCount > 0 && now >= nextRetryAt) {
-        radio.sendNumber(pendingPacket)
+        radio.sendNumber(WEB_PACKET)
         retryCount -= 1
         nextRetryAt = now + RETRY_INTERVAL_MS
     }
